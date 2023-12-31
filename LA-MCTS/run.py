@@ -2,39 +2,43 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# 
+#
 from functions.functions import *
 from functions.mujoco_functions import *
 from lamcts import MCTS
 import argparse
+import timeit
 
 
-
-
-parser = argparse.ArgumentParser(description='Process inputs')
-parser.add_argument('--func', help='specify the test function')
-parser.add_argument('--dims', type=int, help='specify the problem dimensions')
-parser.add_argument('--iterations', type=int, help='specify the iterations to collect in the search')
+parser = argparse.ArgumentParser(description="Process inputs")
+parser.add_argument("--func", help="specify the test function")
+parser.add_argument("--dims", type=int, help="specify the problem dimensions")
+parser.add_argument(
+    "--iterations", type=int, help="specify the iterations to collect in the search"
+)
+parser.add_argument(
+    "--use-botorch", action="store_true", help="use botorch for GP regression"
+)
 
 
 args = parser.parse_args()
 
 f = None
 iteration = 0
-if args.func == 'ackley':
+if args.func == "ackley":
     assert args.dims > 0
-    f = Ackley(dims =args.dims)
-elif args.func == 'levy':
+    f = Ackley(dims=args.dims)
+elif args.func == "levy":
     assert args.dims > 0
-    f = Levy(dims = args.dims)
-elif args.func == 'lunar': 
+    f = Levy(dims=args.dims)
+elif args.func == "lunar":
     f = Lunarlanding()
-elif args.func == 'swimmer':
+elif args.func == "swimmer":
     f = Swimmer()
-elif args.func == 'hopper':
+elif args.func == "hopper":
     f = Hopper()
 else:
-    print('function not defined')
+    print("function not defined")
     os._exit(1)
 
 assert f is not None
@@ -47,19 +51,51 @@ assert args.iterations > 0
 # f = Hopper()
 # f = Lunarlanding()
 
-agent = MCTS(
-             lb = f.lb,              # the lower bound of each problem dimensions
-             ub = f.ub,              # the upper bound of each problem dimensions
-             dims = f.dims,          # the problem dimensions
-             ninits = f.ninits,      # the number of random samples used in initializations 
-             func = f,               # function object to be optimized
-             Cp = f.Cp,              # Cp for MCTS
-             leaf_size = f.leaf_size, # tree leaf size
-             kernel_type = f.kernel_type, #SVM configruation
-             gamma_type = f.gamma_type    #SVM configruation
-             )
+if args.use_botorch:
+    print("Using botorch for GP regression")
+else:
+    print("Using sklearn for GP regression")
 
-agent.search(iterations = args.iterations)
+
+def test(iterations):
+    agent = MCTS(
+        lb=f.lb,  # the lower bound of each problem dimensions
+        ub=f.ub,  # the upper bound of each problem dimensions
+        dims=f.dims,  # the problem dimensions
+        ninits=f.ninits,  # the number of random samples used in initializations
+        func=f,  # function object to be optimized
+        Cp=f.Cp,  # Cp for MCTS
+        leaf_size=f.leaf_size,  # tree leaf size
+        kernel_type=f.kernel_type,  # SVM configruation
+        gamma_type=f.gamma_type,  # SVM configruation
+        use_botorch=args.use_botorch,
+    )
+
+    agent.search(iterations=iterations)
+
+
+test(args.iterations)
+
+
+# agent = MCTS(
+#     lb=f.lb,  # the lower bound of each problem dimensions
+#     ub=f.ub,  # the upper bound of each problem dimensions
+#     dims=f.dims,  # the problem dimensions
+#     ninits=f.ninits,  # the number of random samples used in initializations
+#     func=f,  # function object to be optimized
+#     Cp=f.Cp,  # Cp for MCTS
+#     leaf_size=f.leaf_size,  # tree leaf size
+#     kernel_type=f.kernel_type,  # SVM configruation
+#     gamma_type=f.gamma_type,  # SVM configruation
+# )
+
+# agent.search(iterations=args.iterations)
+
+# num_repeat = 5
+# total_time = timeit.timeit(lambda: test(args.iterations), number=num_repeat)
+# print("Total time: ", total_time)
+# print("Avg time: ", total_time / num_repeat)
+
 
 """
 FAQ:
