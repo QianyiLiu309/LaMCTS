@@ -3,8 +3,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
-# from .Classifier import Classifier
-from .Classifier_constrained import Classifier
+from .Classifier import Classifier
 import json
 import numpy as np
 import math
@@ -125,18 +124,6 @@ class Node:
         proposed_X = self.classifier.propose_samples_bo(
             num_samples, path, lb, ub, samples
         )
-        return proposed_X
-
-    def propose_samples_botorch(self, num_samples, path, lb, ub, samples):
-        try:
-            proposed_X = self.classifier.propose_samples_botorch(
-                num_samples, path, lb, ub, samples, bags=self.bag
-            )
-        except ValueError:
-            print("AssertionError, fall back to propose_samples_bo")
-            proposed_X = self.classifier.propose_samples_bo(
-                num_samples, path, lb, ub, samples
-            )
         return proposed_X
 
     def propose_samples_turbo(self, num_samples, path, func):

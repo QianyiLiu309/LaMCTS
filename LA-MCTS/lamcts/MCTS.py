@@ -38,6 +38,7 @@ class MCTS:
         kernel_type="rbf",
         gamma_type="auto",
         use_botorch=False,
+        init_samples=True,
     ):
         self.dims = dims
         self.samples = []
@@ -75,7 +76,11 @@ class MCTS:
 
         self.ROOT = root
         self.CURT = self.ROOT
-        self.init_train()
+
+        if init_samples:
+            self.init_train()
+
+        self.iteration_counter = 0
 
     def populate_training_data(self):
         # only keep root
@@ -190,6 +195,7 @@ class MCTS:
         return value
 
     def init_train(self):
+        print(f"Init training with {self.ninits} points")
         # here we use latin hyper space to generate init samples in the search space
         init_points = latin_hypercube(self.ninits, self.dims)
         init_points = from_unit_cube(init_points, self.lb, self.ub)
@@ -244,26 +250,26 @@ class MCTS:
         with open(trace_path, "a") as f:
             f.write(final_results_str + "\n")
 
-    def greedy_select(self):
-        self.reset_to_root()
-        curt_node = self.ROOT
-        path = []
-        if self.visualization == True:
-            curt_node.plot_samples_and_boundary(self.func)
-        while curt_node.is_leaf() == False:
-            UCT = []
-            for i in curt_node.kids:
-                UCT.append(i.get_xbar())
-            choice = np.random.choice(np.argwhere(UCT == np.amax(UCT)).reshape(-1), 1)[
-                0
-            ]
-            path.append((curt_node, choice))
-            curt_node = curt_node.kids[choice]
-            if curt_node.is_leaf() == False and self.visualization == True:
-                curt_node.plot_samples_and_boundary(self.func)
-            print("=>", curt_node.get_name(), end=" ")
-        print("")
-        return curt_node, path
+    # def greedy_select(self):
+    #     self.reset_to_root()
+    #     curt_node = self.ROOT
+    #     path = []
+    #     if self.visualization == True:
+    #         curt_node.plot_samples_and_boundary(self.func)
+    #     while curt_node.is_leaf() == False:
+    #         UCT = []
+    #         for i in curt_node.kids:
+    #             UCT.append(i.get_xbar())
+    #         choice = np.random.choice(np.argwhere(UCT == np.amax(UCT)).reshape(-1), 1)[
+    #             0
+    #         ]
+    #         path.append((curt_node, choice))
+    #         curt_node = curt_node.kids[choice]
+    #         if curt_node.is_leaf() == False and self.visualization == True:
+    #             curt_node.plot_samples_and_boundary(self.func)
+    #         print("=>", curt_node.get_name(), end=" ")
+    #     print("")
+    #     return curt_node, path
 
     def select(self):
         self.reset_to_root()
@@ -291,15 +297,21 @@ class MCTS:
             curt_node = curt_node.parent
 
     def search(self, iterations):
-        for idx in range(self.sample_counter, iterations):
+        for idx in range(self.sample_counter, self.sample_counter + iterations):
             print("")
             print("=" * 10)
-            print("iteration:", idx)
+            print("iteration:", self.iteration_counter)
+            self.iteration_counter += 1
             print("=" * 10)
             self.dynamic_treeify()
             leaf, path = self.select()
             for i in range(0, 1):
-                if self.solver_type == "bo":
+                if self.solver_type == "bo" and self.use_botorch == True:
+                    samples = leaf.propose_samples_botorch(
+                        1, path, self.lb, self.ub, self.samples
+                    )
+                    print(f"samples: {samples.shape}")
+                elif self.solver_type == "bo":
                     samples = leaf.propose_samples_bo(
                         1, path, self.lb, self.ub, self.samples
                     )
@@ -309,7 +321,9 @@ class MCTS:
                     raise Exception("solver not implemented")
                 for idx in range(0, len(samples)):
                     # here, this is sequential
-                    if self.solver_type == "bo":
+                    if self.solver_type == "bo" and self.use_botorch == True:
+                        value = self.collect_samples(samples[idx])
+                    elif self.solver_type == "bo":
                         value = self.collect_samples(samples[idx])
                     elif self.solver_type == "turbo":
                         value = self.collect_samples(samples[idx], values[idx])
@@ -321,9 +335,16 @@ class MCTS:
             print("current best f(x):", np.absolute(self.curt_best_value))
             # print("current best x:", np.around(self.curt_best_sample, decimals=1) )
             print("current best x:", self.curt_best_sample)
+        name = str(iterations)
+        name += f"_{str(datetime.now())}"
+        if self.use_botorch:
+            name += "_botorch"
+        self.func.tracker.dump_trace(name=name)
+        # self.dump_trace()
         return np.absolute(self.curt_best_value)
 
     def get_samples(self):
+        print("get samples:", len(self.samples))
         return self.samples
 
     def set_samples(self, samples):
@@ -331,6 +352,10 @@ class MCTS:
         # self.sample_counter = len(samples)
         # print("set samples:", len(samples))
         # print("set sample counter:", self.sample_counter)
+        self.samples.clear()
+        self.samples_counter = 0
+        self.curt_best_value = float("-inf")
+        self.curt_best_sample = None
         for sample, value in samples:
             if value > self.curt_best_value:
                 self.curt_best_value = value

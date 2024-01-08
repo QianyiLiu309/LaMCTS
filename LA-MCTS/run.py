@@ -58,6 +58,18 @@ else:
 
 
 def test(iterations):
+    f = None
+    if args.func == "ackley":
+        f = Ackley(dims=args.dims)
+    elif args.func == "levy":
+        f = Levy(dims=args.dims)
+    elif args.func == "lunar":
+        f = Lunarlanding()
+    elif args.func == "swimmer":
+        f = Swimmer()
+    elif args.func == "hopper":
+        f = Hopper()
+
     agent = MCTS(
         lb=f.lb,  # the lower bound of each problem dimensions
         ub=f.ub,  # the upper bound of each problem dimensions
@@ -74,7 +86,7 @@ def test(iterations):
     agent.search(iterations=iterations)
 
 
-test(args.iterations)
+# test(args.iterations)
 
 
 # agent = MCTS(
@@ -91,10 +103,22 @@ test(args.iterations)
 
 # agent.search(iterations=args.iterations)
 
-# num_repeat = 5
+num_repeat = 3
+
+execution_time_ls = []
+
+for _ in range(num_repeat):
+    execution_time = timeit.timeit(lambda: test(args.iterations), number=1)
+    execution_time_ls.append(execution_time)
+
+import numpy as np
+
+print(f"Execution time of {num_repeat} runs: {execution_time_ls}")
+execution_time_array = np.array(execution_time_ls)
 # total_time = timeit.timeit(lambda: test(args.iterations), number=num_repeat)
-# print("Total time: ", total_time)
-# print("Avg time: ", total_time / num_repeat)
+print("Total time: ", np.sum(execution_time_array))
+print("Avg time: ", np.mean(execution_time_array))
+print("Std: ", np.std(execution_time_array))
 
 
 """
