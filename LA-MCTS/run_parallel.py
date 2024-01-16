@@ -24,6 +24,7 @@ parser.add_argument(
 )
 
 
+
 args = parser.parse_args()
 
 f = None
@@ -124,19 +125,19 @@ def test(iterations, cores, interval):
 
         samples_ls = ray.get([agent.get_samples.remote() for agent in remote_agents])
 
-        merged_samples = sum(samples_ls, [])
-        merged_samples_array = [np.append(x, fx) for (x, fx) in merged_samples]
-        merged_samples_array = np.array(merged_samples_array)
-        merged_sampels_array = np.unique(merged_samples_array, axis=0)
-        merged_samples = merged_sampels_array.tolist()
-        merged_samples = [(x[:-1], float(x[-1])) for x in merged_samples]
-        print(f"Length of merged samples: {len(merged_samples)}")
+        if i + interval < iterations:
+            # if we need to continue paralle training
+            merged_samples = sum(samples_ls, [])
+            merged_samples_array = [np.append(x, fx) for (x, fx) in merged_samples]
+            merged_samples_array = np.array(merged_samples_array)
+            merged_sampels_array = np.unique(merged_samples_array, axis=0)
+            merged_samples = merged_sampels_array.tolist()
+            merged_samples = [(x[:-1], float(x[-1])) for x in merged_samples]
+            print(f"Length of merged samples: {len(merged_samples)}")
 
-        for agent in remote_agents:
-            agent.set_samples.remote(merged_samples)
-            print(f"Set samples for {agent} with length {len(merged_samples)}")
-
-    samples_ls = ray.get([agent.get_samples.remote() for agent in remote_agents])
+            for agent in remote_agents:
+                agent.set_samples.remote(merged_samples)
+                print(f"Set samples for {agent} with length {len(merged_samples)}")
 
     merged_samples = sum(samples_ls, [])
     merged_samples_array = [np.append(x, fx) for (x, fx) in merged_samples]
@@ -145,10 +146,6 @@ def test(iterations, cores, interval):
     merged_samples = merged_sampels_array.tolist()
     merged_samples = [(x[:-1], float(x[-1])) for x in merged_samples]
     print(f"Length of merged samples: {len(merged_samples)}")
-
-    for agent in remote_agents:
-        agent.set_samples.remote(merged_samples)
-        print(f"Set samples for {agent} with length {len(merged_samples)}")
 
     f = None
     if args.func == "ackley":

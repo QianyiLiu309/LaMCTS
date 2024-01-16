@@ -21,7 +21,7 @@ from .Node import Node
 from .utils import latin_hypercube, from_unit_cube
 from torch.quasirandom import SobolEngine
 import torch
-
+import ray
 
 class MCTS:
     #############################################
@@ -39,6 +39,8 @@ class MCTS:
         gamma_type="auto",
         use_botorch=False,
         init_samples=True,
+        forget=False,
+        leaf_parallel=False,
     ):
         self.dims = dims
         self.samples = []
@@ -54,6 +56,8 @@ class MCTS:
         self.sample_counter = 0
         self.visualization = False
         self.use_botorch = use_botorch
+        self.forget = forget
+        self.leaf_parallel = leaf_parallel
 
         self.LEAF_SAMPLE_SIZE = leaf_size
         self.kernel_type = kernel_type
@@ -81,9 +85,18 @@ class MCTS:
             self.init_train()
 
         self.iteration_counter = 0
+        self.improvement_made = False
+
+        self.num_samples = []
+        self.leaf_scores = []
 
     def populate_training_data(self):
         # only keep root
+        if self.forget and self.improvement_made:
+            samples_to_keep = self.select_samples_to_keep()
+        else:
+            samples_to_keep = None
+
         self.ROOT.obj_counter = 0
         for node in self.nodes:
             node.clear_data()
@@ -100,7 +113,12 @@ class MCTS:
 
         self.ROOT = new_root
         self.CURT = self.ROOT
-        self.ROOT.update_bag(self.samples)
+        # self.ROOT.update_bag(self.samples)
+        if samples_to_keep is None:
+            self.ROOT.update_bag(self.samples)
+        else:
+            self.ROOT.update_bag(samples_to_keep)
+            self.samples = samples_to_keep
 
     def get_leaf_status(self):
         status = []
@@ -186,10 +204,12 @@ class MCTS:
         if value == None:
             value = self.func(sample) * -1
 
+        print(value)
         if value > self.curt_best_value:
             self.curt_best_value = value
             self.curt_best_sample = sample
             self.best_value_trace.append((value, self.sample_counter))
+            self.improvement_made = True
         self.sample_counter += 1
         self.samples.append((sample, value))
         return value
@@ -201,6 +221,7 @@ class MCTS:
         init_points = from_unit_cube(init_points, self.lb, self.ub)
 
         for point in init_points:
+            print("init point:", point)
             self.collect_samples(point)
 
         print(
@@ -287,6 +308,42 @@ class MCTS:
             print("=>", curt_node.get_name(), end=" ")
         print("")
         return curt_node, path
+    
+    def select_samples_to_keep(self):
+        # if not self.ROOT.is_leaf() and not self.ROOT.kids[0].is_leaf() and not self.ROOT.kids[1].is_leaf():
+        #     print(f"node 1 has {len(self.ROOT.kids[0].bag)} samples")
+        #     print(f"node 2 has {len(self.ROOT.kids[1].bag)} samples")
+        #     print(f"node 3 has {len(self.ROOT.kids[0].kids[0].bag)} samples")
+        #     print(f"node 4 has {len(self.ROOT.kids[0].kids[1].bag)} samples")
+        #     print(f"node 5 has {len(self.ROOT.kids[1].kids[0].bag)} samples")
+        #     print(f"node 6 has {len(self.ROOT.kids[1].kids[1].bag)} samples")
+        #     samples_to_keep = self.ROOT.kids[0].bag + self.ROOT.kids[1].kids[0].bag
+        #     print(f"keep {len(samples_to_keep)} samples, with total {len(self.samples)} samples")
+        # else:
+        #     print(f"Keep all samples")
+        #     samples_to_keep = None
+        # return samples_to_keep
+
+        if self.ROOT.is_leaf():
+            print(f"Keep all samples")
+            return None
+
+        samples_to_keep = []        
+        curt_node = self.ROOT
+
+        while not curt_node.kids[1].is_leaf():
+            samples_to_keep += curt_node.kids[0].bag
+            curt_node = curt_node.kids[1]
+        print(f"Remove samples from node {curt_node.kids[1].get_name()}")
+        samples_to_keep += curt_node.kids[0].bag
+        print(curt_node.classifier.svm.support_vectors_.shape)
+        for sample in curt_node.kids[1].bag:
+            # print(sample[0])
+            if sample[0] in curt_node.classifier.svm.support_vectors_:
+                samples_to_keep.append(sample)
+        print(f"keep {len(samples_to_keep)} samples, with total {len(self.samples)} samples")
+        return samples_to_keep
+
 
     def backpropogate(self, leaf, acc):
         curt_node = leaf
@@ -297,6 +354,8 @@ class MCTS:
             curt_node = curt_node.parent
 
     def search(self, iterations):
+        if self.leaf_parallel:
+            ray.init()
         for idx in range(self.sample_counter, self.sample_counter + iterations):
             print("")
             print("=" * 10)
@@ -304,6 +363,7 @@ class MCTS:
             self.iteration_counter += 1
             print("=" * 10)
             self.dynamic_treeify()
+            self.improvement_made = False
             leaf, path = self.select()
             for i in range(0, 1):
                 if self.solver_type == "bo" and self.use_botorch == True:
@@ -319,35 +379,70 @@ class MCTS:
                     samples, values = leaf.propose_samples_turbo(10000, path, self.func)
                 else:
                     raise Exception("solver not implemented")
-                for idx in range(0, len(samples)):
-                    # here, this is sequential
-                    if self.solver_type == "bo" and self.use_botorch == True:
-                        value = self.collect_samples(samples[idx])
-                    elif self.solver_type == "bo":
-                        value = self.collect_samples(samples[idx])
-                    elif self.solver_type == "turbo":
-                        value = self.collect_samples(samples[idx], values[idx])
-                    else:
-                        raise Exception("solver not implemented")
+                
+                if self.leaf_parallel:
+                    @ray.remote(num_cpus=1)
+                    def evaluation(sample):
+                        return sample, self.func(sample) * -1
+                    
+                    remote_evaluations = [evaluation.remote(sample) for sample in samples]
+                    print("remote evaluations:", len(remote_evaluations))
+                    evaluation_results = ray.get(remote_evaluations) 
+                    for sample, value in evaluation_results:
+                        if value > self.curt_best_value:
+                            self.curt_best_value = value
+                            self.curt_best_sample = sample
+                            self.best_value_trace.append((value, self.sample_counter))
+                            self.improvement_made = True
+                        self.sample_counter += 1
+                        self.samples.append((sample, value))
+                        self.func.tracker.track(value * -1)
 
-                    self.backpropogate(leaf, value)
+                        self.backpropogate(leaf, value)
+
+                else:
+                    for idx in range(0, len(samples)):
+                        # here, this is sequential
+                        if self.solver_type == "bo" and self.use_botorch == True:
+                            value = self.collect_samples(samples[idx])
+                        elif self.solver_type == "bo":
+                            value = self.collect_samples(samples[idx])
+                        elif self.solver_type == "turbo":
+                            value = self.collect_samples(samples[idx], values[idx])
+                        else:
+                            raise Exception("solver not implemented")
+
+                        self.backpropogate(leaf, value)
             print("total samples:", len(self.samples))
             print("current best f(x):", np.absolute(self.curt_best_value))
             # print("current best x:", np.around(self.curt_best_sample, decimals=1) )
             print("current best x:", self.curt_best_sample)
+            self.num_samples.append(len(self.samples))
+            self.leaf_scores.append(leaf.x_bar)
         name = str(iterations)
-        name += f"_{str(datetime.now())}"
         if self.use_botorch:
             name += "_botorch"
+        if self.forget:
+            name += "_forget"
         self.func.tracker.dump_trace(name=name)
         # self.dump_trace()
+        if self.leaf_parallel:
+            ray.shutdown()
+
+        with open(
+            f"results/{name}.txt",
+            "a",
+        ) as file:
+            file.write(str(self.num_samples) + "\n")
+            file.write(str(self.leaf_scores) + "\n")
+
         return np.absolute(self.curt_best_value)
 
     def get_samples(self):
         print("get samples:", len(self.samples))
         return self.samples
 
-    def set_samples(self, samples):
+    def set_samples(self, samples, start_index=0):
         # self.samples = samples
         # self.sample_counter = len(samples)
         # print("set samples:", len(samples))

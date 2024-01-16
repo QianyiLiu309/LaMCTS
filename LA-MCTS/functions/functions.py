@@ -17,6 +17,7 @@ class tracker:
         self.counter = 0
         self.results = []
         self.elapsed_time = []
+        self.num_samples = []
         self.curt_best = float("inf")
         self.foldername = foldername
         self.start_time = datetime.now()

@@ -19,6 +19,12 @@ parser.add_argument(
 parser.add_argument(
     "--use-botorch", action="store_true", help="use botorch for GP regression"
 )
+parser.add_argument(
+    "--forget", action="store_true", help="forget bad samples"
+)
+parser.add_argument(
+    "--leaf-parallel", action="store_true", help="evaluate samples in parallel"
+)
 
 
 args = parser.parse_args()
@@ -81,6 +87,8 @@ def test(iterations):
         kernel_type=f.kernel_type,  # SVM configruation
         gamma_type=f.gamma_type,  # SVM configruation
         use_botorch=args.use_botorch,
+        forget=args.forget,
+        leaf_parallel=args.leaf_parallel,
     )
 
     agent.search(iterations=iterations)

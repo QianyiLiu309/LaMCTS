@@ -7,6 +7,7 @@ import numpy as np
 import gym
 import json
 import os
+from functions.functions import tracker
 
 class Swimmer:
     
@@ -19,7 +20,7 @@ class Swimmer:
         self.ub           =  1 * np.ones(self.dims)
         self.counter      = 0
         self.env          = gym.make('Swimmer-v2')
-        self.num_rollouts = 3
+        self.num_rollouts = 50
         
         #tunable hyper-parameters in LA-MCTS
         self.Cp           = 20
@@ -34,6 +35,7 @@ class Swimmer:
         print("policy:", self.policy_shape )
         
         self.render = False
+        self.tracker = tracker("Swimmer")
         
     
     def __call__(self, x):
@@ -51,6 +53,7 @@ class Swimmer:
         
         for i in range(self.num_rollouts):
             obs    = self.env.reset()
+            obs = obs[0]
             done   = False
             totalr = 0.
             steps  = 0
@@ -60,14 +63,15 @@ class Swimmer:
                 action = np.dot(M, (obs - self.mean)/self.std)
                 observations.append(obs)
                 actions.append(action)
-                obs, r, done, _ = self.env.step(action)
+                obs, r, terminated, truncated, _ = self.env.step(action)
+                done = terminated or truncated
                 totalr += r
                 steps += 1                
                 if self.render:
                     self.env.render()            
             returns.append(totalr)
             
-        
+        self.tracker.track(np.mean(returns) * -1)
         return np.mean(returns)*-1
         
 
